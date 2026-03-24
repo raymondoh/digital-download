@@ -1,12 +1,15 @@
 import { NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
-import { getAdminAuth } from "@/lib/firebase/admin/init";
-import { getEnv } from "@/lib/env";
-
-const env = getEnv();
+import { adminAuth } from "@/lib/firebase/admin";
+import GoogleProvider from "next-auth/providers/google";
+import { env } from "@/lib/env";
 
 export const authOptions: NextAuthOptions = {
   providers: [
+    GoogleProvider({
+      clientId: env.GOOGLE_CLIENT_ID,
+      clientSecret: env.GOOGLE_CLIENT_SECRET
+    }),
     CredentialsProvider({
       id: "credentials",
       name: "Firebase",
@@ -20,7 +23,7 @@ export const authOptions: NextAuthOptions = {
 
         try {
           // 1. Verify the Firebase token securely on the server
-          const adminAuth = getAdminAuth();
+          // FIX: Use the imported adminAuth constant directly. Do not invoke it as a function.
           const decodedToken = await adminAuth.verifyIdToken(credentials.idToken);
 
           // 2. Return the user object to NextAuth

@@ -1,112 +1,81 @@
-// src/app/api/webhooks/route.ts
-import { headers } from "next/headers";
 import { NextResponse } from "next/server";
 import { stripe } from "@/lib/stripe";
-import { getEnv } from "@/lib/env";
-import { getAdminFirestore } from "@/lib/firebase/admin/init";
+import { adminDb } from "@/lib/firebase/admin";
+import { Order } from "@/lib/schemas";
 import { Resend } from "resend";
+import { ReceiptEmail } from "@/components/emails/receipt-email";
+import { env } from "@/lib/env";
 
-const env = getEnv();
 const resend = new Resend(env.RESEND_API_KEY);
+const endpointSecret = env.STRIPE_WEBHOOK_SECRET;
 
 export async function POST(req: Request) {
-  const body = await req.text();
-  const headersList = await headers();
-  const signature = headersList.get("Stripe-Signature") as string;
-
-  let event;
-
   try {
-    // 1. Verify the webhook signature securely
-    event = stripe.webhooks.constructEvent(
-      body,
-      signature,
-      env.STRIPE_WEBHOOK_SECRET || "" // You'll get this secret when you run the Stripe CLI locally
-    );
-  } catch (error: any) {
-    console.error("❌ Webhook signature verification failed.", error.message);
-    return new NextResponse(`Webhook Error: ${error.message}`, { status: 400 });
-  }
+    // 1. Get the raw body and signature for security verification
+    const body = await req.text();
+    const signature = req.headers.get("stripe-signature");
 
-  // 2. Handle the successful checkout event
-  if (event.type === "checkout.session.completed") {
-    const session = event.data.object as any;
+    if (!signature || !endpointSecret) {
+      return NextResponse.json({ error: "Missing signature or webhook secret" }, { status: 400 });
+    }
 
+    // 2. Verify the event came from Stripe
+    let event;
     try {
-      // We will pass the Firebase orderId to Stripe when the user clicks "Buy",
-      // so Stripe passes it right back to us here in the metadata.
+      event = stripe.webhooks.constructEvent(body, signature, endpointSecret);
+    } catch (err: any) {
+      console.error(`⚠️ Webhook signature verification failed: ${err.message}`);
+      return NextResponse.json({ error: err.message }, { status: 400 });
+    }
+
+    // 3. Handle the successful checkout event
+    if (event.type === "checkout.session.completed") {
+      const session = event.data.object;
+
+      // Grab the database Order ID we passed through our Checkout Action
       const orderId = session.metadata?.orderId;
 
       if (!orderId) {
-        throw new Error("No order ID found in session metadata");
+        throw new Error("No orderId found in Stripe metadata");
       }
 
-      const db = getAdminFirestore();
-      const orderRef = db.collection("orders").doc(orderId);
+      // 4. Fetch the pending order from Firestore
+      const orderRef = adminDb.collection("orders").doc(orderId);
       const orderSnap = await orderRef.get();
 
       if (!orderSnap.exists) {
-        throw new Error("Order not found in Firebase");
+        throw new Error(`Order ${orderId} not found in database`);
       }
 
-      const orderData = orderSnap.data();
+      const orderData = { id: orderSnap.id, ...orderSnap.data() } as Order;
 
-      // 3. Mark the Firebase order as paid
-      await orderRef.update({
-        status: "paid",
-        stripeSessionId: session.id
-      });
-
-      // 4. Extract the digital deliverables to email
-      const items = orderData?.items || [];
-      const downloadLinksHtml = items
-        .map(
-          (item: any) =>
-            `<li style="margin-bottom: 10px;">
-          <a href="${item.deliverableUrl}" style="color: #2563eb; font-weight: bold; text-decoration: none;">
-            Access ${item.title}
-          </a>
-        </li>`
-        )
-        .join("");
-
-      // 5. Send the delivery email via Resend
-      const customerEmail = session.customer_details?.email || orderData?.customerEmail;
-
+      // 5. Send the fulfillment email via Resend
       const emailResult = await resend.emails.send({
-        from: env.SUPPORT_EMAIL, // Must be a verified domain in Resend
-        to: customerEmail,
-        subject: "Your Digital Downloads Are Here! 🎉",
-        html: `
-          <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-            <h1 style="color: #111827;">Thank you for your purchase!</h1>
-            <p style="color: #4b5563; line-height: 1.5;">
-              Your $1 templates are ready. Click the links below to instantly copy them into your workspace:
-            </p>
-            <ul style="padding-left: 20px;">
-              ${downloadLinksHtml}
-            </ul>
-            <p style="color: #6b7280; font-size: 14px; margin-top: 30px;">
-              If you have any issues accessing your files, just reply directly to this email!
-            </p>
-          </div>
-        `
+        from: "Dollar Download <no-reply@plumbersportal.com>", // Update with your verified Resend domain
+        to: session.customer_details?.email || orderData.customerEmail,
+        subject: "Your Templates are Ready | Dollar Download",
+        react: ReceiptEmail({ order: orderData })
       });
 
       if (emailResult.error) {
-        console.error("❌ Failed to send email via Resend:", emailResult.error);
-        // We log the error but don't throw, so Stripe still gets a 200 OK and doesn't infinitely retry
-      } else {
-        // 6. Mark delivery as sent in Firebase!
-        await orderRef.update({ deliveryEmailSent: true });
-        console.log(`✅ Order ${orderId} successfully fulfilled!`);
+        console.error("❌ Failed to send Resend email:", emailResult.error);
+        // We don't throw here, because we still want to mark the order as paid!
       }
-    } catch (error: any) {
-      console.error("❌ Error processing successful checkout:", error);
-      return new NextResponse("Webhook handler failed", { status: 500 });
-    }
-  }
 
-  // Always return a 200 to Stripe to acknowledge receipt of the event
-  return new NextResponse(null, { status: 200 });
+      // 6. Mark the order as completely fulfilled in your database
+      await orderRef.update({
+        status: "paid",
+        deliveryEmailSent: !emailResult.error, // True if email sent successfully
+        updatedAt: Date.now()
+      });
+
+      console.log(`✅ Order ${orderId} fulfilled successfully!`);
+    }
+
+    // Return a 200 response to acknowledge receipt of the event
+    return NextResponse.json({ received: true }, { status: 200 });
+  } catch (error: any) {
+    console.error("❌ Webhook Error:", error.message);
+    return NextResponse.json({ error: "Webhook handler failed" }, { status: 500 });
+  }
 }

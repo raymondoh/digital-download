@@ -1,44 +1,52 @@
+// src/components/checkout-button.tsx
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
-import { createCheckoutSession } from "@/app/actions/checkout";
+import { Button } from "@/components/ui/button";
+import { createCheckoutSession } from "@/actions/checkout";
 
-export function CheckoutButton({ productId }: { productId: string }) {
+interface CheckoutButtonProps {
+  productId: string;
+  priceInCents: number;
+}
+
+export function CheckoutButton({ productId, priceInCents }: CheckoutButtonProps) {
   const [isLoading, setIsLoading] = useState(false);
-  const router = useRouter();
+
+  // Format price (e.g., 100 cents -> $1.00)
+  const formattedPrice = new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD"
+  }).format(priceInCents / 100);
 
   const handleCheckout = async () => {
     setIsLoading(true);
-
     try {
-      // Call the Server Action we built earlier
-      const result = await createCheckoutSession(productId);
+      const { url, error } = await createCheckoutSession(productId);
 
-      if (result.error) {
-        // In a production app, you'd use a nice Shadcn toast here instead of an alert!
-        alert(result.error);
+      if (error) {
+        console.error("Checkout failed:", error);
+        alert(error); // In a production app, use a toast notification here
         setIsLoading(false);
         return;
       }
 
-      if (result.url) {
-        // Redirect the user to the secure Stripe hosted checkout page
-        router.push(result.url);
+      if (url) {
+        window.location.href = url; // Redirect to Stripe Checkout
       }
-    } catch (error) {
-      console.error("Checkout failed:", error);
-      alert("Something went wrong. Please try again.");
+    } catch (err) {
+      console.error("Unexpected error:", err);
       setIsLoading(false);
     }
   };
 
   return (
-    <button
+    <Button
       onClick={handleCheckout}
       disabled={isLoading}
-      className="w-full max-w-sm rounded-md bg-zinc-900 px-8 py-3 text-sm font-medium text-white transition-colors hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50">
-      {isLoading ? "Preparing secure checkout..." : "$1 - Buy Now"}
-    </button>
+      size="lg"
+      className="w-full font-medium shadow-sm transition-all">
+      {isLoading ? "Redirecting securely..." : `Buy for ${formattedPrice}`}
+    </Button>
   );
 }
