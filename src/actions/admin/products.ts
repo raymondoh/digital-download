@@ -6,10 +6,16 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 import { ZodError } from "zod";
+import { env } from "@/lib/env";
 
 //const ADMIN_EMAIL = "raymondmhylton@gmail.com";
 // 1. Verify Admin Status securely on the server using the env variable
+// const session = await getServerSession(authOptions);
+// if (!session?.user || session.user.email !== process.env.ADMIN_EMAIL) {
+//   throw new Error("Unauthorized access");
+// }
 const session = await getServerSession(authOptions);
+
 if (!session?.user || session.user.email !== process.env.ADMIN_EMAIL) {
   throw new Error("Unauthorized access");
 }
@@ -18,9 +24,14 @@ type CreateProductInput = Omit<Product, "id" | "createdAt" | "updatedAt">;
 
 export async function createProduct(formData: CreateProductInput) {
   try {
+    // const session = await getServerSession(authOptions);
+
+    // if (!session?.user || session.user.email !== env.ADMIN_EMAIL) {
+    //   throw new Error("Unauthorized access");
+    // }
     const session = await getServerSession(authOptions);
 
-    if (!session?.user || session.user.email !== ADMIN_EMAIL) {
+    if (!session?.user || session.user.email !== process.env.ADMIN_EMAIL) {
       throw new Error("Unauthorized access");
     }
 

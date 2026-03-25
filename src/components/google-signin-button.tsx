@@ -1,9 +1,10 @@
+// src/components/google-signin-button.tsx
 "use client";
 
 import { useState } from "react";
 import { signIn } from "next-auth/react";
 import { useRouter } from "next/navigation";
-import { auth } from "@/lib/firebase/client/init";
+import { auth } from "@/lib/firebase/client";
 import { GoogleAuthProvider, signInWithPopup } from "firebase/auth";
 
 export function GoogleSignInButton() {

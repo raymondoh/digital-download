@@ -5,7 +5,7 @@ interface ReceiptEmailProps {
   order: Order;
 }
 
-export const ReceiptEmail: React.FC<Readonly<ReceiptEmailProps>> = ({ order }) => {
+export function ReceiptEmail({ order }: Readonly<ReceiptEmailProps>) {
   const formattedTotal = new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: "USD"
@@ -99,4 +99,4 @@ export const ReceiptEmail: React.FC<Readonly<ReceiptEmailProps>> = ({ order }) =
       </div>
     </div>
   );
-};
+}
